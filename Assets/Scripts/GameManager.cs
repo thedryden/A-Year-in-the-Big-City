@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -40,6 +41,12 @@ public class GameManager : MonoBehaviour
     public void AddActor( Actor _actor )
     {
         //Register actors
+        if (ActorDictionary.ContainsKey(_actor.ID)){
+            string newID = Guid.NewGuid().ToString();
+            Debug.Log("There is already an actor with the ID of: " + _actor.ID + ". ID has been changed to " + newID);
+            _actor.ID = newID;
+        }
+
         Actors.Add(_actor);
         ActorDictionary.Add(_actor.ID, _actor);
     }

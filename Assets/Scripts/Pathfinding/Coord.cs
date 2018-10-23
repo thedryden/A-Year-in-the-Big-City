@@ -105,6 +105,17 @@ public class Coord {
         return new Coord(0, 0, false);
     }
 
+    /// <summary>
+    /// If given two Coords it will tell you if they are diagonal. Diagonal in this case is defined as both the x and y values are different.
+    /// </summary>
+    /// <param name="_one">One of the Coords to compare</param>
+    /// <param name="_two">The other Coord to compare</param>
+    /// <returns>Returns true if both x and y values are different.</returns>
+    public static bool AreDiagonal( Coord _one, Coord _two)
+    {
+        return (_one.X != _two.X && _one.Y != _two.Y);
+    }
+
     public override bool Equals(object obj)
     {
         var coord = obj as Coord;

@@ -43,4 +43,34 @@ public class Actor : MonoBehaviour {
 	void Update () {
 		
 	}
+
+    public static bool operator ==( Actor _one, Actor _two)
+    {
+        if (object.ReferenceEquals(_one, null) && object.ReferenceEquals(_two, null))
+            return true;
+        if (object.ReferenceEquals(_one, null) || object.ReferenceEquals(_two, null))
+            return false;
+        return _one.ID == _two.ID;
+    }
+
+    public static bool operator !=(Actor _one, Actor _two)
+    {
+        return !(_one == _two);
+    }
+
+    public override bool Equals(object obj)
+    {
+        var actor = obj as Actor;
+        return actor != null &&
+               base.Equals(obj) &&
+               ID == actor.ID;
+    }
+
+    public override int GetHashCode()
+    {
+        var hashCode = 1458105184;
+        hashCode = hashCode * -1521134295 + base.GetHashCode();
+        hashCode = hashCode * -1521134295 + EqualityComparer<string>.Default.GetHashCode(ID);
+        return hashCode;
+    }
 }

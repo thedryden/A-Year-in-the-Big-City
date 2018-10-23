@@ -96,6 +96,18 @@ public class Movement : MonoBehaviour {
         { Directions.Northwest, 15 }
     };
 
+    public static Dictionary<int, Directions> MovingThroughIntDirection = new Dictionary<int, Directions>()
+    {
+        { 1, Directions.North },
+        { 3, Directions.Northeast },
+        { 5, Directions.East },
+        { 7, Directions.Southeast },
+        { 9, Directions.South },
+        { 11, Directions.Southwest },
+        { 13, Directions.West },
+        { 15, Directions.Northwest }
+    };
+
     /// <summary>
     /// Speed is an abstract property of an actor. This function translates that property into moveTime which is the number of seconds it takes the actor to move 1 tile
     /// </summary>
@@ -215,6 +227,28 @@ public class Movement : MonoBehaviour {
         MoveOne(_destination, false);
     }
 
+    public static Directions CoordsToDirection( Coord _start, Coord _end)
+    {
+        Coord diff = _end - _start;
+        if (diff.X > 0 && diff.Y < 0)
+            return Directions.Northeast;
+        else if (diff.X < 0f && diff.Y < 0)
+            return Directions.Northwest;
+        else if (diff.X > 0 && diff.Y > 0)
+            return Directions.Southeast;
+        else if (diff.X < 0 && diff.Y > 0)
+            return Directions.Southwest;
+        else if (diff.X > 0)
+            return Directions.East;
+        else if (diff.X < 0)
+            return Directions.West;
+        else if (diff.Y > 0)
+            return Directions.South;
+        else if (diff.Y < 0)
+            return Directions.North;
+        return Directions.South;
+    }
+
     /// <summary>
     /// Moves and actor one node in the passed direction. It also handles:
     /// 1) tracking tilesX/Y and startTilesX/Y
@@ -233,24 +267,7 @@ public class Movement : MonoBehaviour {
         Vector3 end = MyTiles.tiles[_destination.X, _destination.Y].WorldPosition + GameManager.instance.TileOffset;
 
         //Find the direction of travel
-        Coord diff = _destination - TileCoord;
-        Directions direction = Directions.South;
-        if (diff.X > 0 && diff.Y < 0)
-            direction = Directions.Northeast;
-        else if (diff.X < 0f && diff.Y < 0)
-            direction = Directions.Northwest;
-        else if (diff.X > 0 && diff.Y > 0)
-            direction = Directions.Southeast;
-        else if (diff.X < 0 && diff.Y > 0)
-            direction = Directions.Southwest;
-        else if (diff.X > 0)
-            direction = Directions.East;
-        else if (diff.X < 0)
-            direction = Directions.West;
-        else if (diff.Y > 0)
-            direction = Directions.South;
-        else if (diff.Y < 0)
-            direction = Directions.North;
+        Directions direction = CoordsToDirection( TileCoord, _destination );
 
         //Capture the current position as the starting point of the move
         StartTileCoord = TileCoord.Copy();
@@ -258,8 +275,13 @@ public class Movement : MonoBehaviour {
         //Stores the position in MyTiles.nodes that this actor is moving to
         TileCoord = _destination;
         //Set moving through
-        MyTiles.movingThrough[StartTileCoord.X, StartTileCoord.Y] = MovingThroughDirectionInt[direction];
-        MyTiles.movingThrough[TileCoord.X, TileCoord.Y] = MovingThroughDirectionInt[direction] + 1;
+        MyTiles.SetMovingThrough(StartTileCoord, MovingThroughDirectionInt[direction], MyActor);
+        MyTiles.SetMovingThrough(TileCoord, MovingThroughDirectionInt[direction] + 1, MyActor);
+        if(Coord.AreDiagonal(StartTileCoord, TileCoord))
+        {
+            MyTiles.SetMovingThrough(new Coord(TileCoord.X, StartTileCoord.Y ), MovingThroughDirectionInt[direction], MyActor);
+            MyTiles.SetMovingThrough(new Coord(StartTileCoord.X, TileCoord.Y), MovingThroughDirectionInt[direction] + 1, MyActor);
+        }
         
         //Sets the current moveTime to make sure its acurate before the move.
         SetMoveTimeNow();
@@ -281,10 +303,13 @@ public class Movement : MonoBehaviour {
     /// </summary>
     private void RemoveMovingThrough()
     {
-        MyTiles.movingThrough[StartTileCoord.X, StartTileCoord.Y] = 0;
-        MyTiles.movingThrough[TileCoord.X, TileCoord.Y] = 0;
-        StartTileCoord.X = 0;
-        StartTileCoord.Y = 0;
+        MyTiles.RemoveMovingThrough(StartTileCoord);
+        MyTiles.RemoveMovingThrough(TileCoord);
+        if (Coord.AreDiagonal(StartTileCoord, TileCoord))
+        {
+            MyTiles.RemoveMovingThrough(new Coord(TileCoord.X, StartTileCoord.Y));
+            MyTiles.RemoveMovingThrough(new Coord(StartTileCoord.X, TileCoord.Y));
+        }
     }
 
     /// <summary>

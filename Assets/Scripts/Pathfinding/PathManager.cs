@@ -254,6 +254,42 @@ public class PathManager : MonoBehaviour {
             return;
         }
 
+        //Check for colision with actor
+        int mt = tiles.GetMovingThrough(next);
+        /* Posibilities, in any drawings we are U is us and S is collisions start point and E is collisions end point
+         * 1) mt is 0, nothing there no collision
+         * 2) We are traveling in the same direction. We if so we need to lookup the speed of the actor we just bumped into. If we're faster the we recalc the with _toAvoid on the next 3 tiles dead ahead.
+         * 3) T-Bone. If we are T-Boning in start from location, then simply wait. If we T-Boned in against the destination and moving towards the start puts us close to the destination then create a new path that start with a move in that direction followed by a recalc.
+         *  SE
+         *   U move if our desitnation is <- otherwise wait
+         * 4) Head on collision since we got here second we're always the victum. Recalculate with toAvoid on the two blocked tiles
+         */
+
+        if (mt != 0)
+        {
+            Movement.Directions myDirection = Movement.CoordsToDirection(_actor.myMovement.TileCoord, next);
+            bool hitStart = true;
+            bool wait = false;
+            Movement.Directions theirDirection = 0;
+            if (Movement.MovingThroughIntDirection.ContainsKey(mt))
+                theirDirection = Movement.MovingThroughIntDirection[mt];
+            else if (Movement.MovingThroughIntDirection.ContainsKey(mt - 1)) {
+                theirDirection = Movement.MovingThroughIntDirection[mt - 1];
+                hitStart = false;
+            }
+            else //If we can't figure out the direction just wait and hopefully it will resolve itself.
+                wait = true;
+            if(myDirection == theirDirection)
+            {
+                Actor aActor = tiles.GetActorMovingThrough(next);
+                if (_actor.speed >= aActor.speed)
+                    //Recal path but set toAvoid the next 3 steps
+                else
+                    wait = true;
+            }
+                
+        }
+
         //Determine if this is the last part of the path, if it is set moveSlow to true
         bool moveSlow = (aPath.Length == 0);
 

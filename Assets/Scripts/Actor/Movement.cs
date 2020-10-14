@@ -28,11 +28,17 @@ public class Movement : MonoBehaviour {
     /// </summary>
     public bool Walking { get; private set; }
     /// <summary>
+    /// Indicates the actor is currently in process of moving between cells. 
+    /// This differs from Walking in that a walking actor is currently following a path, but may not be currently in the process of moving.
+    /// </summary>
+    public bool InStep { get; private set; }
+    /// <summary>
     /// The array index in MyTiles.tiles that the actor is on. If walking TileCoord.x/Y will be the tile you are moving toward, and StartTileCoord.x/Y will be the tile you started from.
     /// If not moving TileCoord.x/TileCoord.y will be your exact position in the array and StartTileCoord.x/Y will be 0.
     /// </summary>
     public Coord TileCoord { get; private set; }
     public Coord StartTileCoord { get; private set; }
+    public HashSet<MovingThroughItem> MyMovingThrough { get; private set; }
     /// <summary>
     /// myRigidboy, myCollider, and myAnimator are all referances to required gameObjects attached to all actors.
     /// </summary>
@@ -62,11 +68,11 @@ public class Movement : MonoBehaviour {
     /// If this is set to true, the current move action will be cancelled after the next frame.
     /// </summary>
     private bool cancelMove;
-    
+
     /// <summary>
     /// Stores the caridnal directions in an enum to make them easier to use
     /// </summary>
-    public enum Directions { North,Northeast,East,Southeast,South,Southwest,West,Northwest }
+    public enum Directions { North, Northeast, East, Southeast, South, Southwest, West, Northwest }
     /// <summary>
     /// Converts Directions into a float that can be multiplied by the size of a node to get the vector of travel
     /// </summary>
@@ -111,13 +117,13 @@ public class Movement : MonoBehaviour {
     /// <summary>
     /// Speed is an abstract property of an actor. This function translates that property into moveTime which is the number of seconds it takes the actor to move 1 tile
     /// </summary>
-    public static float SpeedToMoveTime( float _speed)
+    public static float SpeedToMoveTime(float _speed)
     {
         return Mathf.Clamp(0.25f * (GameManager.instance.defaultSpeed / _speed), GameManager.instance.maxMovementSpeed, GameManager.instance.minMovementSpeed);
     }
 
     // Use this for initialization
-    void Start () {
+    void Start() {
         //Get Components
         if (MyActor == null)
             MyActor = GetComponent<Actor>();
@@ -129,10 +135,10 @@ public class Movement : MonoBehaviour {
             myCollider = GetComponent<BoxCollider2D>();
 
         SetMoveTime();
+        MyMovingThrough = new HashSet<MovingThroughItem>();
 
         StartCoroutine(WaitForActor());
         //Sets default to facing south and not walking
-        SetFacing(Directions.South);
         SetWalking(false);
     }
 
@@ -142,9 +148,11 @@ public class Movement : MonoBehaviour {
     /// <returns></returns>
     private IEnumerator WaitForActor()
     {
-        while(MyActor.myMovement == null)
+        while (MyActor.myMovement == null)
             yield return null;
         PlaceActor();
+        MyTiles.TilesToConsole();
+        MyActor.MoveReady();
     }
 
     /// <summary>
@@ -172,25 +180,58 @@ public class Movement : MonoBehaviour {
     /// </summary>
     private void SetNextMoveTime()
     {
-        if(nextMoveTime != 0f)
+        if (nextMoveTime != 0f)
             MoveTime = nextMoveTime;
         nextMoveTime = 0f;
+    }
+
+    public void PlaceActor(Coord _p)
+    {
+        TileCell aTile = MyTiles.GetTile(_p);
+        PlaceActor(aTile.WorldPosition + GameManager.instance.TileOffset);
     }
 
     /// <summary>
     /// Anytime an actors position is change manually (outside of this class) it should always be with the method to ensure that actor know where it is.
     /// </summary>
     /// <param name="_position">New transform.position you wish to move the actor to</param>
-    public void PlaceActor( Vector3 _position)
+    public bool PlaceActor(Vector3 _position)
     {
+        PathManager pm = GameManager.instance.pathManager;
+
+        //Stored so we can move the actor back to its original position if the new position is not passable
+        Vector3 oldPosition = transform.position;
         transform.position = _position;
-        PlaceActor();
+        //If not walking then the two variable below will be used to stop the actor. It is done in this order to precent having to call start/stop moving on an actor if PlaceActor fails
+        Tiles oldTiles = MyTiles;
+        Coord oldCoord = TileCoord;
+        if (!PlaceActor())
+        {
+            transform.position = oldPosition;
+            return false;
+        }
+        //IF walking get them walking again from this position.
+        if (Walking) {
+            CoordLinked aPath = null;
+            if (pm.paths.ContainsKey(MyActor.ID))
+                aPath = pm.paths[MyActor.ID];
+            if (aPath != null && aPath.GetFoot() != null)
+                pm.MoveActorTo(MyActor, aPath.GetFoot());
+        }
+        //If not walking remove their blocking on the old position, and start blocking again at the new position
+        else
+        {
+            pm.ActorMoving(oldCoord, oldTiles, MyActor);
+            pm.ActorStopped(MyActor);
+        }   
+
+        return true;
     }
 
     /// <summary>
     /// Used to place the actor on a tiles object so that the actor can keep track of its position.
     /// </summary>
-    public void PlaceActor()
+    public bool PlaceActor()
     {
         PathManager aPathManager = GameManager.instance.pathManager;
         Coord p;
@@ -206,9 +247,12 @@ public class Movement : MonoBehaviour {
             TileCoord = p.Copy();
             //Move the actor then block the new tile
             transform.position = idealPosition;
-            if(!Walking)
+            if (!Walking)
                 aPathManager.ActorStopped(MyActor);
+            if (GameManager.instance.ShowDebug) Debug.Log("Actor, " + MyActor.ID + ", has been place at: " + TileCoord);
+            return true;
         }
+        return false;
     }
     /// <summary>
     /// Cancels the current move after the next frame. Move done actions will still be performed, except move true up.
@@ -227,7 +271,7 @@ public class Movement : MonoBehaviour {
         MoveOne(_destination, false);
     }
 
-    public static Directions CoordsToDirection( Coord _start, Coord _end)
+    public static Directions CoordsToDirection(Coord _start, Coord _end)
     {
         Coord diff = _end - _start;
         if (diff.X > 0 && diff.Y < 0)
@@ -258,8 +302,11 @@ public class Movement : MonoBehaviour {
     /// </summary>
     /// <param name="_direction">The direction you wish to move this actor in.</param>
     /// <param name="_endSlow">If true the actor will slow towards the end of the move.</param>
-    public void MoveOne( Coord _destination, bool _endSlow )
+    public void MoveOne(Coord _destination, bool _endSlow)
     {
+        if (GameManager.instance.pathManager.pathCalcCount.ContainsKey(MyActor.ID))
+            GameManager.instance.pathManager.pathCalcCount[MyActor.ID] = 0;
+
         _destination = _destination.Copy();
         //Turn off cancelMove
         cancelMove = false;
@@ -267,28 +314,22 @@ public class Movement : MonoBehaviour {
         Vector3 end = MyTiles.tiles[_destination.X, _destination.Y].WorldPosition + GameManager.instance.TileOffset;
 
         //Find the direction of travel
-        Directions direction = CoordsToDirection( TileCoord, _destination );
+        Directions direction = CoordsToDirection(TileCoord, _destination);
 
         //Capture the current position as the starting point of the move
         StartTileCoord = TileCoord.Copy();
 
         //Stores the position in MyTiles.nodes that this actor is moving to
         TileCoord = _destination;
-        //Set moving through
-        MyTiles.SetMovingThrough(StartTileCoord, MovingThroughDirectionInt[direction], MyActor);
-        MyTiles.SetMovingThrough(TileCoord, MovingThroughDirectionInt[direction] + 1, MyActor);
-        if(Coord.AreDiagonal(StartTileCoord, TileCoord))
-        {
-            MyTiles.SetMovingThrough(new Coord(TileCoord.X, StartTileCoord.Y ), MovingThroughDirectionInt[direction], MyActor);
-            MyTiles.SetMovingThrough(new Coord(StartTileCoord.X, TileCoord.Y), MovingThroughDirectionInt[direction] + 1, MyActor);
-        }
-        
+
         //Sets the current moveTime to make sure its acurate before the move.
         SetMoveTimeNow();
         //If entering difficult terain double the moveTime so the actor moves twice as slowly.
         if (MyTiles.tiles[TileCoord.X, TileCoord.Y].Type == TileCell.TileType.Difficult)
             MoveTime *= 2;
-        
+
+        MyTiles.SetMovingThrough(CalculateMovingThrough(StartTileCoord, TileCoord));
+
         //Start actually moving, either at a constant speed or progressivly more slowly
         if (_endSlow)
             StartCoroutine(SmoothMovement(end));
@@ -297,19 +338,47 @@ public class Movement : MonoBehaviour {
         //Set the animation direction
         SetFacing(direction);
     }
+
+    public HashSet<MovingThroughItem> CalculateMovingThrough(Coord _start, Coord _end)
+    {
+        return CalculateMovingThrough(CoordsToDirection(_start, _end), _start, _end);
+    }
+
+    /// <summary>
+    /// Takes a direction of travel and the two adjacent Coords that represent the start and end of a movement, and returns the set of MovingThroughItems the actor would ocupy to make the move.
+    /// Any node that will not be ocupied by this actor at the end of the move uses the base moving through, any node that will be occupied at the end of the move will base moving through +1.
+    /// This function will not actually set MovingThrough on a tile, or the movements MyMovingThrough.
+    /// This method was writen under the asumption that the two coords are not more than 1 step appart, if they are more than one step appart this method is unlikely to return the desired result.
+    /// </summary>
+    /// <param name="_direction">Direction of travel represented by the two coords</param>
+    /// <param name="_start">Where the actor would start</param>
+    /// <param name="_end">Where the actor would end</param>
+    /// <returns>A set of MovingThroughItems that represent where the actors would be.</returns>
+    public HashSet<MovingThroughItem> CalculateMovingThrough(Directions _direction, Coord _start, Coord _end)
+    {
+        //Any location where the actor will not be after the move should be mt. Any location they will occupy after the move should be mt + 1
+        HashSet<MovingThroughItem> output = new HashSet<MovingThroughItem>();
+        int mt = MovingThroughDirectionInt[_direction];
+        output.Add(new MovingThroughItem(_start, MyActor, mt));
+        output.Add(new MovingThroughItem(_end, MyActor, mt + 1));
+        if (Coord.AreDiagonal(_start, _end))
+        {
+            output.Add(new MovingThroughItem(new Coord(_start.X, _end.Y), MyActor, mt));
+            output.Add(new MovingThroughItem(new Coord(_end.X, _start.Y), MyActor, mt));
+        }
+        return output;
+    }
+
     /// <summary>
     /// When actors start a move they reserve nodes to prevent two actors trying to move into the same node.
     /// This function removes this actors reservations in MyTiles.movingThrough.
     /// </summary>
-    private void RemoveMovingThrough()
+    public void RemoveMovingThrough()
     {
-        MyTiles.RemoveMovingThrough(StartTileCoord);
-        MyTiles.RemoveMovingThrough(TileCoord);
-        if (Coord.AreDiagonal(StartTileCoord, TileCoord))
-        {
-            MyTiles.RemoveMovingThrough(new Coord(TileCoord.X, StartTileCoord.Y));
-            MyTiles.RemoveMovingThrough(new Coord(StartTileCoord.X, TileCoord.Y));
-        }
+        if(MyMovingThrough != null)
+            foreach (MovingThroughItem aItem in MyMovingThrough)
+                MyTiles.RemoveMovingThrough(aItem.P);
+        MyMovingThrough.Clear();
     }
 
     /// <summary>
@@ -319,9 +388,9 @@ public class Movement : MonoBehaviour {
     /// <returns></returns>
     protected IEnumerator FastMovement(Vector3 _end)
     {
-        Debug.Log("Distance moved: " + Vector3.Distance(transform.position, _end));
         //Indicate the actor is walking
         SetWalking(true);
+        InStep = true;
 
         //Convert find the true distance being traveled, convert that into "tiles" by dividing by timeSize and
         //then divide the whole thing by 1 to get the inverse so we can multiply rath than divide.
@@ -360,6 +429,7 @@ public class Movement : MonoBehaviour {
             SetWalking(false);
         //Reset moving through
         RemoveMovingThrough();
+        InStep = false;
         //Call pathmanger to get the next step
         GameManager.instance.pathManager.AdvancePath(MyActor.ID);
     }
@@ -373,6 +443,7 @@ public class Movement : MonoBehaviour {
     {
         //Indicate the actor is walking
         SetWalking(true);
+        InStep = true;
         //Convert find the true distance being traveled, convert that into "tiles" by dividing by timeSize and
         //then divide the whole thing by 1 to get the inverse so we can multiply rath than divide.
         float inverseDistanceRatio = 1 / (Vector3.Distance(transform.position, _end) / GameManager.instance.tileSize);
@@ -405,6 +476,7 @@ public class Movement : MonoBehaviour {
         GameManager.instance.pathManager.AdvancePath(MyActor.ID);
         //Stop walking animation
         SetWalking(false);
+        InStep = false;
         //Since we don't expect to go back to MoveOne, set MoveTime here
         SetNextMoveTime();
     }

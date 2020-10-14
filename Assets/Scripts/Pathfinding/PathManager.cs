@@ -12,6 +12,7 @@ public class PathManager : MonoBehaviour {
     /// Contains all paths of all actor. Once a path is complete it will be removed, so don't always expect there to be a path
     /// </summary>
     public Dictionary<string, CoordLinked> paths;
+    public Dictionary<string, int> pathCalcCount;
     /// <summary>
     /// An array containing a Tiles object for each grid in the scene
     /// </summary>
@@ -21,12 +22,20 @@ public class PathManager : MonoBehaviour {
     /// </summary>
     private int activeTile;
 
-	/// <summary>
+    /// <summary>
+    /// Event that is called whenever a path completes
+    /// </summary>
+    public delegate void PathComplete(Actor _actor);
+    public event PathComplete OnPathComplete;
+
+    /// <summary>
     /// Initalizes the class. This is done in Awake because it must always happen before Actor are started
     /// </summary>
-	void Awake () {
+    void Awake () {
         GetGrids();
         paths = new Dictionary<string, CoordLinked>();
+        pathCalcCount = new Dictionary<string, int>();
+        GameManager.instance.PathReady();
     }
 
     /// <summary>
@@ -119,29 +128,40 @@ public class PathManager : MonoBehaviour {
     /// <param name="_actor">actor who needs to no longer be blocking</param>
     public void ActorMoving(Actor _actor)
     {
-        Tiles aTiles = _actor.myMovement.MyTiles;
-        if (aTiles == null)
+        ActorMoving(_actor.myMovement.TileCoord, _actor.myMovement.MyTiles, _actor);
+    }
+    
+    /// <summary>
+     /// When an actor stops moving the tile they're standing on become blocked. This function reverse that process.
+     /// </summary>
+     /// <param name="_actor">actor who needs to no longer be blocking</param>
+    public void ActorMoving(Coord _position, Tiles _tiles, Actor _actor)
+    {
+        if (_tiles == null)
             return;
-        Coord actorCoord = _actor.myMovement.TileCoord;
-
+        
         //Get current type of tile, revert tileOverride, if the new tile type is the same as the old tile type we're done
-        TileCell.TileType startType = aTiles.GetTile(actorCoord).Type;
-        aTiles.GetTile(actorCoord).RevertOverride();
-        if (startType == aTiles.GetTile(actorCoord).Type)
+        TileCell.TileType startType = _tiles.GetTile(_position).Type;
+        _tiles.GetTile(_position).RevertOverride();
+        if (startType == _tiles.GetTile(_position).Type)
             return;
 
         //If the tile type is differnt update the graph
-        aTiles.SetEdgesOfEdges(actorCoord);
+        _tiles.SetEdgesOfEdges(_position);
 
         //Since an non moving actor could block an entire path, all paths are recalculated.
-        foreach( Actor aActor in GameManager.instance.Actors)
+        foreach (Actor aActor in GameManager.instance.Actors)
         {
             //Don't recalculate this actors path, and don't recalculat if the actor doens't already have a path
-            if (_actor.ID != aActor.ID && paths.ContainsKey(aActor.ID)){
+            if (_actor.ID != aActor.ID && paths.ContainsKey(aActor.ID))
+            {
                 //Get destination of the path, and recalculate
                 Coord aFoot = paths[aActor.ID].GetFoot();
-                Vector3 end = aTiles.GetTile(aFoot).WorldPosition;
-                MoveActorTo(aActor, end);
+                if (aFoot != null)
+                {
+                    Vector3 end = _tiles.GetTile(aFoot).WorldPosition;
+                    MoveActorTo(aActor, end);
+                }
             }
         }
     }
@@ -228,24 +248,20 @@ public class PathManager : MonoBehaviour {
     {
         Tiles tiles = _actor.myMovement.MyTiles;
 
-        CoordLinked aPath = paths[_actor.ID];
+        CoordLinked aPath = null;
+        if(paths.ContainsKey(_actor.ID))
+            aPath = paths[_actor.ID];
 
         //If this actor no longer has a path, stop the actor
-        if (aPath == null)
+        if (aPath == null || aPath.GetHead() == null)
         {
+            paths.Remove(_actor.ID);
             ActorStopped(_actor);
+            OnPathComplete(_actor);
             return;
         }
 
         Coord next = aPath.Pop();
-            
-        //If the actor's path is empty stop the actor and remove the path
-        if(next == null)
-        {
-            paths.Remove(_actor.ID);
-            ActorStopped(_actor);
-            return;
-        }
         
         //If the requested "move" is to the position the actor is already at, call this againt to get the next node and then do nothing
         if (next == _actor.myMovement.TileCoord)
@@ -254,40 +270,23 @@ public class PathManager : MonoBehaviour {
             return;
         }
 
-        //Check for colision with actor
-        int mt = tiles.GetMovingThrough(next);
-        /* Posibilities, in any drawings we are U is us and S is collisions start point and E is collisions end point
-         * 1) mt is 0, nothing there no collision
-         * 2) We are traveling in the same direction. We if so we need to lookup the speed of the actor we just bumped into. If we're faster the we recalc the with _toAvoid on the next 3 tiles dead ahead.
-         * 3) T-Bone. If we are T-Boning in start from location, then simply wait. If we T-Boned in against the destination and moving towards the start puts us close to the destination then create a new path that start with a move in that direction followed by a recalc.
-         *  SE
-         *   U move if our desitnation is <- otherwise wait
-         * 4) Head on collision since we got here second we're always the victum. Recalculate with toAvoid on the two blocked tiles
-         */
-
-        if (mt != 0)
+        HashSet<MovingThroughItem> toAvoid = new HashSet<MovingThroughItem>();
+        HashSet<Coord> toAvoidFirstStep = new HashSet<Coord>();
+        int code = ProcessMovingThrough(_actor.myMovement, next, out toAvoid, out toAvoidFirstStep);
+        if (code == 1)
         {
-            Movement.Directions myDirection = Movement.CoordsToDirection(_actor.myMovement.TileCoord, next);
-            bool hitStart = true;
-            bool wait = false;
-            Movement.Directions theirDirection = 0;
-            if (Movement.MovingThroughIntDirection.ContainsKey(mt))
-                theirDirection = Movement.MovingThroughIntDirection[mt];
-            else if (Movement.MovingThroughIntDirection.ContainsKey(mt - 1)) {
-                theirDirection = Movement.MovingThroughIntDirection[mt - 1];
-                hitStart = false;
-            }
-            else //If we can't figure out the direction just wait and hopefully it will resolve itself.
-                wait = true;
-            if(myDirection == theirDirection)
-            {
-                Actor aActor = tiles.GetActorMovingThrough(next);
-                if (_actor.speed >= aActor.speed)
-                    //Recal path but set toAvoid the next 3 steps
-                else
-                    wait = true;
-            }
-                
+            ProcessCodeOne(_actor, toAvoid, toAvoidFirstStep);
+            return;
+        }
+        else if (code == 2)
+        {
+            ProcessCodeTwo(_actor, toAvoid, toAvoidFirstStep);
+            return;
+        }
+        else if (code == 3)
+        {
+            StartCoroutine(AdvancePathHelper(_actor));
+            return;
         }
 
         //Determine if this is the last part of the path, if it is set moveSlow to true
@@ -295,6 +294,161 @@ public class PathManager : MonoBehaviour {
 
         //Move the actor
         _actor.myMovement.MoveOne(next, moveSlow);
+    }
+
+    private IEnumerator AdvancePathHelper(Actor _actor)
+    {
+        yield return new WaitForSeconds(.1f);
+        AdvancePath(_actor);
+    }
+
+    private IEnumerator AdvancePathHelper(Actor _actor, float _seconds)
+    {
+        yield return new WaitForSeconds(_seconds);
+        AdvancePath(_actor);
+    }
+
+    public int ProcessMovingThrough( Movement _move, Coord _next, out HashSet<MovingThroughItem> _toAvoid, out HashSet<Coord> _toAvoidFirstStep )
+    {
+        /* Posibilities, in any drawings we are U is us and S is collisions start point and E is collisions end point
+         * 1) mt is 0, nothing there no collision
+         * 2) We are traveling in the same direction. We if so we need to lookup the speed of the actor we just bumped into. If we're faster the we recalc the with _toAvoid on the next 3 tiles dead ahead.
+         * 3) T-Bone. If we are T-Boning in start from location, then simply wait. If we T-Boned in against the destination and moving towards the start puts us close to the destination then create a new path that start with a move in that direction followed by a recalc.
+         *  SE
+         *   U move if our desitnation is <- otherwise wait
+         * 4) Head on collision since we got here second we're always the victum. Recalculate with toAvoid on the two blocked tiles
+         * All of this will be reduce to a 3 point scale, where the lower items on the scale always take precidence over greater ones
+         * 1) You MUST calculate a new path that incorporates to avoid and start that path instead.
+         * 2) Calculate a new path (np) and compare it to the current path (cp). If np.length <= cp.length + 1, then replace the old path with the new path and start navigating that.
+         * 3) No new path required, just wait
+         * for your path to clear.
+         */
+        _toAvoid = null;
+        _toAvoidFirstStep = null;
+        HashSet<MovingThroughItem> myMt = _move.CalculateMovingThrough(_move.TileCoord, _next);
+        Dictionary<string,List<MovingThroughItem>> toProcess = null;
+        _move.MyTiles.SetMovingThrough(_move.CalculateMovingThrough(_move.TileCoord, _move.TileCoord));
+        foreach ( MovingThroughItem aMt in myMt)
+        {
+            MovingThroughItem temp = _move.MyTiles.GetMovingThrough(aMt.P);
+            if(temp.mt != 0 && temp.myActor != _move.MyActor)
+            {
+                if (toProcess == null)
+                    toProcess = new Dictionary<string, List<MovingThroughItem>>();
+                if (!toProcess.ContainsKey(temp.myActor.ID))
+                    toProcess.Add(temp.myActor.ID, new List<MovingThroughItem>());
+                toProcess[temp.myActor.ID].Add(temp);
+            }
+        }
+        if (toProcess == null)
+        {
+            _move.RemoveMovingThrough();
+            return 0;
+        }
+
+        _toAvoid = new HashSet<MovingThroughItem>();
+        Movement.Directions myDir = Movement.CoordsToDirection(_move.TileCoord, _next);
+        int code = int.MaxValue;
+        foreach (KeyValuePair<string, List<MovingThroughItem>> entry in toProcess)
+            code = UDF.Min(code, ProcessMovingThroughHelper(_move, myDir, _toAvoid, GameManager.instance.ActorDictionary[entry.Key], entry.Value));
+
+        if (code < 3){
+            _toAvoidFirstStep = new HashSet<Coord>();
+            foreach (Node aNode in _move.MyTiles.GetNode(_move.TileCoord).edges)
+                if (Coord.AreDiagonal(_move.TileCoord, aNode.P))
+                    _toAvoidFirstStep.Add(aNode.P);
+        }
+        return code;
+    }
+
+    public int ProcessMovingThroughHelper(Movement _move, Movement.Directions _myDir, HashSet<MovingThroughItem> _toAvoid, Actor _cActor, List<MovingThroughItem> _cList)
+    {
+        bool presentAtEnd = false;
+        Movement.Directions aDir = Movement.Directions.South;
+        Movement cMove = _cActor.myMovement;
+        _toAvoid.UnionWith(cMove.MyMovingThrough);
+        foreach (MovingThroughItem aMT in _cList)
+        {
+            aDir = Movement.Directions.South;
+            if (Movement.MovingThroughIntDirection.ContainsKey(aMT.mt))
+                aDir = Movement.MovingThroughIntDirection[aMT.mt];
+            else if (Movement.MovingThroughIntDirection.ContainsKey(aMT.mt + 1))
+            {
+                aDir = Movement.MovingThroughIntDirection[aMT.mt + 1];
+                presentAtEnd = true;
+            }
+            else
+            {
+                Debug.Log("Unable to handle local avoidance becase we could not get a direction from the movingThroughInt of " + aMT.mt);
+                return 3; //If we can't get a direction, there was an error, so we'll just wait and hope it goes away
+            }
+        }
+        //Moving same direction, see if my speed is greater than their speed, recal path adding next two of their steps to toAvoid
+        if (aDir == _myDir)
+        {
+            if (_move.MyActor.speed > _cActor.speed)
+            {
+                CoordLinked aPath = paths[_cActor.ID];
+                Coord prev = cMove.TileCoord;
+                Coord next = aPath.StartIteration();
+                int i = 1;
+                while (next != null && i < 3)
+                {
+                    HashSet<MovingThroughItem> aMt = cMove.CalculateMovingThrough(prev, next);
+                    _toAvoid.UnionWith(aMt);
+                    prev = next;
+                    next = aPath.Next();
+                    i++;
+                }
+                if (GameManager.instance.ShowDebug) Debug.Log("Atempting to find a way around, may wait. The actor " + _move.MyActor.ID + "'s path is blocked by the actor" + _cActor.ID + ".");
+                return 2;//tell the pathfinder to TRY recalculating
+            }
+            else
+            {
+                if (GameManager.instance.ShowDebug) Debug.Log("Waiting for path to clear. The actor " + _move.MyActor.ID + "'s path is blocked by the actor" + _cActor.ID + ".");
+                return 3;//Just wait it out
+            }
+        }
+        int myReverseMt = Movement.MovingThroughDirectionInt[_myDir];
+        myReverseMt = (myReverseMt - 8 > 0) ? myReverseMt - 8 : myReverseMt - 8 + 16;
+        //If we're on a colision course
+        if (myReverseMt == _cList[0].mt || myReverseMt == _cList[0].mt - 1) {
+            if (GameManager.instance.ShowDebug) Debug.Log("Finding a new path. The actor " + _move.MyActor.ID + "'s path is blocked by the actor" + _cActor.ID + ".");
+            return 1;
+        }
+
+        //Tbone
+        if (presentAtEnd)
+        {
+            if (GameManager.instance.ShowDebug) Debug.Log("Atempting to find a way around, may wait.The actor " + _move.MyActor.ID + "'s path is blocked by the actor" + _cActor.ID + ".");
+            return 2;
+        }
+        if (GameManager.instance.ShowDebug) Debug.Log("Waiting for path to clear. The actor " + _move.MyActor.ID + "'s path is blocked by the actor" + _cActor.ID + ".");
+        return 3;
+    }
+
+    private void ProcessCodeOne(Actor _actor, HashSet<MovingThroughItem> _toAvoid, HashSet<Coord> _toAvoidFirstStep)
+    {
+        HashSet<Coord> toAvoid = new HashSet<Coord>();
+        foreach (MovingThroughItem aMt in _toAvoid)
+            toAvoid.Add(aMt.P);
+        _actor.myMovement.RemoveMovingThrough();
+        MoveActorTo(_actor, paths[_actor.ID].GetFoot(), toAvoid, _toAvoidFirstStep, null);
+    }
+
+    private void ProcessCodeTwo(Actor _actor, HashSet<MovingThroughItem> _toAvoid, HashSet<Coord> _toAvoidFirstStep)
+    {
+        Movement move = _actor.myMovement;
+        CoordLinked currentPath = paths[_actor.ID];
+        HashSet<Coord> toAvoid = new HashSet<Coord>();
+        foreach (MovingThroughItem aMt in _toAvoid)
+            toAvoid.Add(aMt.P);
+        _actor.myMovement.RemoveMovingThrough();
+        CoordLinked aPath = CalculatePath(move.MyTiles, move.TileCoord, currentPath.GetFoot(), toAvoid, _toAvoidFirstStep);
+        if (aPath.Length >= currentPath.Length + 1)
+            MoveActorTo(_actor, currentPath.GetFoot(), null, null, aPath);
+        else
+            AdvancePathHelper(_actor);
     }
 
     /// <summary>
@@ -313,10 +467,23 @@ public class PathManager : MonoBehaviour {
 
         //Make sure destination is on the same tiles object as the actor and normalize the position
         if (!_actor.myMovement.MyTiles.WorldPositionToTile(_destination, out destCord, out _destination))
+        {
             //If the desitination isn't on the same tiles, we're done
+            Debug.Log("The Actor " + _actor.ID + " can't be moved to " + _destination + " becase its not on the same tiles object as the actor.");
             return;
+        }
 
-        MoveActorTo(_actor, destCord);
+        MoveActorTo(_actor, destCord, null, null, null);
+    }
+
+    public void MoveActorTo(string _id, Coord _destination)
+    {
+        MoveActorTo(GameManager.instance.ActorDictionary[_id], _destination, null, null, null);
+    }
+
+    public void MoveActorTo(Actor _actor, Coord _destination)
+    {
+        MoveActorTo(_actor, _destination, null, null, null);
     }
 
     /// <summary>
@@ -324,56 +491,160 @@ public class PathManager : MonoBehaviour {
     /// </summary>
     /// <param name="_id">The actor you wish to move</param>
     /// <param name="_destination">The world position you wish to move the actor to</param>
-    public void MoveActorTo(Actor _actor, Coord _destination)
+    private void MoveActorTo(Actor _actor, Coord _destination, HashSet<Coord> _toAvoid, HashSet<Coord> _toAvoidFirstStep, CoordLinked _path)
     {
         //Determine if the actor is already moving
         bool alreadyMoving = paths.ContainsKey(_actor.ID);
 
-        Tiles tiles = _actor.myMovement.MyTiles;
         //Remove any existing path. Removing this will effective abort the current path. Resulting in either the actor walking our new path, or finishing their current tile to tile move and stopping normally if we couldn't create a new one.
         paths.Remove(_actor.ID);
 
+        if (!pathCalcCount.ContainsKey(_actor.ID))
+            pathCalcCount.Add(_actor.ID, 0);
+
+        if (pathCalcCount[_actor.ID] > 5)
+        {
+            Debug.Log("Actor " + _actor.ID + " has attempted to calculate a path 3 times in a row without actually moving. Cancelling move.");
+            //Calling advancePath while no path is present to close the path
+            //AdvancePath(_actor);
+            return;
+        }
+
+        Tiles tiles = _actor.myMovement.MyTiles;
+        
         //If we're not already moving we need to set the actor as moving before we calculate the path otherwise they'll be standing on a blocking tiles and no path can be found.
         if (!alreadyMoving)
             ActorMoving(_actor);
-        CoordLinked newPath = CalculatePath(tiles, _actor.myMovement.TileCoord, _destination);
+
+        CoordLinked newPath;
+        if (_path == null)
+            newPath = CalculatePath(tiles, _actor.myMovement.TileCoord, _destination, _toAvoid, _toAvoidFirstStep);
+        else
+            newPath = _path;
+
         if (newPath == null)
         {
             //If already moving let the actor come to a stop first, if not stop it to remove it from the graph
-            if(!alreadyMoving)
+            if (!alreadyMoving)
                 ActorStopped(_actor);
             return;
         }
 
         //Store the path
         paths.Add(_actor.ID, newPath);
+        pathCalcCount[_actor.ID]++;
 
-        //Draw path for debugging
-        Vector3 offset = new Vector3(GameManager.instance.tileSize / 2, GameManager.instance.tileSize / 2, GameManager.instance.tileSize / 2);
-        Coord aCoord = newPath.StartIteration();
-        while (aCoord != null)
-        {
-            Vector3 start = tiles.GetTile(aCoord).WorldPosition + offset;
-            aCoord = newPath.Next();
-            if (aCoord == null)
-                break;
-            Vector3 end = tiles.GetTile(aCoord).WorldPosition + offset;
-            Debug.DrawLine(start, end, Color.red, 10, false);
-        }
+        DrawDebugPath(_actor, newPath, tiles);
 
         //If not already moving start moving, if already moving cancel the path so we will start on this new path at the next frame
-        if (!alreadyMoving)
+        if (!alreadyMoving || !_actor.myMovement.InStep)
             AdvancePath(_actor);
         else
             _actor.myMovement.CancelMove();
     }
 
-    private CoordLinked CalculatePath(Tiles _tiles, Coord _start, Coord _end)
+    private void DrawDebugPath(Actor _actor, CoordLinked _path, Tiles _tiles)
     {
-        return CalculatePath(_tiles, _start, _end, null);
+        //Draw path for debugging
+        Vector3 offset = new Vector3(GameManager.instance.tileSize / 2, GameManager.instance.tileSize / 2, GameManager.instance.tileSize / 2);
+        Coord aCoord = _path.StartIteration();
+        Vector3 start = _tiles.GetTile(_actor.myMovement.TileCoord).WorldPosition + offset;
+        Vector3 end = _tiles.GetTile(aCoord).WorldPosition + offset;
+        Debug.DrawLine(start, end, Color.red, 10, false);
+        while (aCoord != null)
+        {
+            start = _tiles.GetTile(aCoord).WorldPosition + offset;
+            aCoord = _path.Next();
+            if (aCoord == null)
+                break;
+            end = _tiles.GetTile(aCoord).WorldPosition + offset;
+            Debug.DrawLine(start, end, Color.red, 10, false);
+        }
     }
 
-    private CoordLinked CalculatePath( Tiles _tiles, Coord _start, Coord _end, List<Coord> _toAvoid )
+    private CoordLinked CalculatePath(Tiles _tiles, Coord _start, Coord _end)
+    {
+        return CalculatePath(_tiles, _start, _end, null, null);
+    }
+
+    private CoordLinked CalculatePath(Tiles _tiles, Coord _start, Coord _end, HashSet<Coord> _toAvoid, HashSet<Coord> _toAvoidFirstStep)
+    {
+        Stopwatch timer = Stopwatch.StartNew();
+
+        //Make sure both coords are valid
+        if (!UDF.Between(_start.X, 0, _tiles.tiles.GetLength(0)) || !UDF.Between(_start.Y, 0, _tiles.tiles.GetLength(1))
+            || !UDF.Between(_end.X, 0, _tiles.tiles.GetLength(0)) || !UDF.Between(_end.Y, 0, _tiles.tiles.GetLength(1)))
+        {
+            Debug.Log("Can't calculated path between " + _start + " and " + _end + " because one or more points are off the passed tiles objects");
+            return null;
+        }
+
+        Node source = _tiles.GetNode(_start);
+        Node target = _tiles.GetNode(_end);
+        
+        FNodeList open = new FNodeList(new FNode(source, 0, target), _tiles.tiles.GetLength(0), _tiles.tiles.GetLength(1));
+        HashSet<Node> closed = new HashSet<Node>();
+
+        //Initalize and start loop
+        FNode minNode = open.PopMin();
+        while(minNode != null)
+        {
+            closed.Add(minNode.node);
+            //Stop if target is reached
+            if (minNode.node == target)
+                break;
+
+            //Loop over all edges
+            foreach( Node aEdge in minNode.node.edges)
+            {
+                //Don't process and edge if its closed, or the edge is in _toAvoid
+                if (!closed.Contains(aEdge) && UseEdge(_toAvoid, _toAvoidFirstStep, aEdge.P))
+                {
+                    //Caluclate true distance
+                    int g = Node.DistanceBetween(_tiles, minNode.node, aEdge) + minNode.G;
+                    //Create new FNode. This will calulcate H based on this the target, and any additional weight provided by WeightOfMove. Once we have H, F will then be caluculated from g and h
+                    FNode aFNode = new FNode(aEdge, g, target, Node.WeightOfMove(_tiles, minNode.node, aEdge));
+                    //Process node will either add the node to open if its new, or Update the F value is the new F values is less than the old one. It will then return true if an action is taken
+                    if (open.ProcessNode(aFNode))
+                        aFNode.prev = minNode;
+                }
+            }
+
+            //Iterate the loop
+            _toAvoidFirstStep = null;
+            minNode = open.PopMin();
+        }
+
+        //We could not find a path.
+        if (minNode == null || minNode.node != target)
+        {
+            Debug.Log("Can't calculated path between " + _start + " and " + _end + " because no path could be found.");
+            return null;
+        }
+
+        //Inialize the new path and iterator
+        CoordLinked currentPath = new CoordLinked();
+        FNode aNode = minNode;
+
+        //Create our path by stepping through the prev chain
+        while (aNode != null)
+        {
+            if(aNode.node.P != _start)
+                currentPath.Add(aNode.node);
+            aNode = aNode.prev;
+        };
+
+        timer.Stop();
+        if (GameManager.instance.ShowDebug)
+        {
+            Debug.Log("A path of " + currentPath.Length + " length calculated in " + timer.ElapsedTicks + " ticks. " + closed.Count + " nodes of a total " + _tiles.graph.Length + " nodes visisted.");
+            Debug.Log(currentPath.ToString());
+        }
+
+        return currentPath;
+    }
+
+    private CoordLinked CalculatePathD( Tiles _tiles, Coord _start, Coord _end, HashSet<Coord> _toAvoid )
     {
         Stopwatch timer = Stopwatch.StartNew();
 
@@ -385,89 +656,42 @@ public class PathManager : MonoBehaviour {
             return null;
         }
 
-        Dictionary<Node, float> dist = new Dictionary<Node, float>();
-        Dictionary<Node, Node> prev = new Dictionary<Node, Node>();
+        Node source = _tiles.GetNode(_start);
+        Node target = _tiles.GetNode(_end);
 
-        Node source = _tiles.graph[_start.X, _start.Y];
-        Node target = _tiles.graph[_end.X, _end.Y];
+        // The list of nodes we haven't checked yet.
+        DNodeList open = new DNodeList(new DNode(source,0), _tiles.tiles.GetLength(0), _tiles.tiles.GetLength(1));
+        HashSet<Node> closed = new HashSet<Node>();
 
-        // Setup the "Q" -- the list of nodes we haven't checked yet.
-        MinDist unvisited = new MinDist(source, 0, _tiles.tiles.GetLength(0), _tiles.tiles.GetLength(1));
-
-        dist[source] = 0;
-        prev[source] = null;
-
-        // Initialize everything to have INFINITY distance, since
-        // we don't know any better right now. Also, it's possible
-        // that some nodes CAN'T be reached from the source,
-        // which would make INFINITY a reasonable value
-        foreach (Node n in _tiles.graph)
+        DNode aNode = open.PopMin();
+        while (aNode != null)
         {
-            if (n != source)
-            {
-                dist[n] = Mathf.Infinity;
-                prev[n] = null;
-            }
-
-            unvisited.AddToFoot(n);
-        }
-
-        int totalNodes = unvisited.Length;
-
-        //Loop until all nodes are visited
-        while (unvisited.Length > 0)
-        {
-            //Get the node the min distance, at the start this will always be the source
-            Node aUnvisited = unvisited.PopMin();
-
+            closed.Add(aNode.node);
             //If we've reached the target, stop
-            if (aUnvisited == target)
+            if (aNode.node == target)
                 break;  // Exit the while loop!
 
-            float unDist = dist[aUnvisited];
-            //If the min from Unvisited is ever Infinity it means we could not find a path between source and anything useful.
-            if (unDist == Mathf.Infinity)
-            {
-                Debug.Log("Can't calculated path between " + _start + " and " + _end + " because no path could be found because all edges of source were inacessable.");
-                return null;
-            }
-
             //Loop over all the edges in this node
-            foreach (Node aEdge in aUnvisited.edges)
+            foreach (Node aEdge in aNode.node.edges)
             {
-                bool useEdge = true;
-                if (_toAvoid != null)
-                {
-                    foreach (Coord aCoord in _toAvoid)
-                    {
-                        if (aEdge.P == aCoord)
-                        {
-                            useEdge = false;
-                            break;
-                        }
-
-                    }
-                }
-
-                if (useEdge)
+                //Don't process and edge if its closed, or the edge is in _toAvoid
+                if (!closed.Contains(aEdge) && UseEdge(_toAvoid, null, aEdge.P))
                 {
                     //Calculate the distnace and add it to the distance to get here
-                    float newDistance = unDist + Node.DistanceBetween(_tiles, aUnvisited, aEdge);
+                    int dist = aNode.dist + Node.DistanceBetween(_tiles, aNode.node, aEdge);
+                    DNode aDEdge = new DNode(aEdge, dist);
 
                     //If the total distance here is less than the distance stored (remember these all start as infinate) than store this as the new best path
-                    if (newDistance < dist[aEdge])
-                    {
-                        dist[aEdge] = newDistance;
-                        prev[aEdge] = aUnvisited;
-                        //Change the distance of edge in unvisited to no longer be infinity. This will cause it to eventually be picked by popMin
-                        unvisited.ChangeDistAt(aEdge, newDistance);
-                    }
+                    if (open.ProcessNode(aDEdge))
+                        aDEdge.prev = aNode;
                 }
             }
+
+            aNode = open.PopMin();
         }
 
         //We could not find a path.
-        if (prev[target] == null)
+        if (aNode == null || aNode.prev == null)
         {
             Debug.Log("Can't calculated path between " + _start + " and " + _end + " because no path could be found.");
             return null;
@@ -475,18 +699,30 @@ public class PathManager : MonoBehaviour {
 
         //Inialize the new path and iterator
         CoordLinked currentPath = new CoordLinked();
-        Node aNode = target;
+        DNode pathNode = aNode;
 
         //Create our path by stepping through the prev chain
-        while (aNode != null)
+        while (pathNode != null)
         {
-            currentPath.Add(aNode);
-            aNode = prev[aNode];
+            if (aNode.node.P != _start)
+                currentPath.Add(pathNode.node);
+            pathNode = pathNode.prev;
         };
 
         timer.Stop();
-        if(GameManager.instance.ShowDebug) Debug.Log("A path of " + currentPath.Length + " length calculated in " + timer.ElapsedMilliseconds + " milliseconds. " + ( totalNodes - unvisited.Length ) + " nodes of a total " + totalNodes + " nodes visisted.");
+        if (GameManager.instance.ShowDebug)
+        {
+            Debug.Log("A path of " + currentPath.Length + " length calculated in " + timer.ElapsedTicks + " ticks. " + closed.Count + " nodes of a total " + _tiles.graph.Length + " nodes visisted.");
+            Debug.Log(currentPath.ToString());
+        }
 
         return currentPath;
+    }
+
+    private static bool UseEdge( HashSet<Coord> _toAvoid, HashSet<Coord> _toAvoidFirstStep, Coord _edge )
+    {
+        if (_toAvoid == null && _toAvoidFirstStep == null)
+            return true;
+        return ( _toAvoid == null || !_toAvoid.Contains(_edge) ) && ( _toAvoidFirstStep == null || !_toAvoidFirstStep.Contains(_edge) );
     }
 }

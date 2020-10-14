@@ -6,6 +6,12 @@ using UnityEngine;
 /// Stores your own x and y position as well as a referacne to all of the nodes that are walkable from your current location.
 /// </summary>
 public class Node {
+    /// <summary>
+    /// D = cost to move 1 tile. DD cost to move diagonally.
+    /// D_CAL_CONST should always equal (Node.DD - 2 * Node.D)
+    /// </summary>
+    public static int D = 10, DD = 14, D_CALC_CONST = -1;
+    
     //List of walkable nodes from your current location
     public List<Node> edges;
     //The coordinates in graph of this node
@@ -27,24 +33,41 @@ public class Node {
     /// <summary>
     /// Static function used to calculate the distance between two nodes on the same, passed, tiles object.
     /// This function assume your never traveling beyond one "step" on the graph, i.e. both of the passed nodes should contain the other node in their edges list.
-    /// This is NOT check for speed, so please don't violate this rule.
+    /// This is NOT a check for speed, so please don't violate this rule.
+    /// This will also not check to make sure the move is on the graph, and thus can return an error if you pass a _start or _end that is not.
     /// </summary>
-    /// <param name="tiles">The tiles object both nodes are on</param>
+    /// <param name="_tiles">The tiles object both nodes are on</param>
+    /// <param name="_start">The node your starting from</param>
+    /// <param name="_end">The node your traveling to</param>
+    /// <returns>The cost to move between _start and _end on tiles</returns>
+    public static int DistanceBetween( Tiles _tiles, Node _start, Node _end )
+    {
+        //Set start value based on moving diagonally or not
+        int distanceTo = (Coord.AreDiagonal(_start.P, _end.P)) ? DD : D;
+        //Double the distance if the terain of the tile you'd be entering is difficult
+        if (_tiles.GetTile(_end.P).Type == TileCell.TileType.Difficult)
+            distanceTo *= 2;
+
+        return distanceTo;
+    }
+
+    /// <summary>
+    /// If the move is weighted more than the baseline (terain is difficult) then return the ammont the move is more difficult than baseline.
+    /// I.E. if move cost is baseline move cost is 10 and this move will cost 20 this will return 10.
+    /// This function assume your never traveling beyond one "step" on the graph, i.e. both of the passed nodes should contain the other node in their edges list.
+    /// This is NOT a check for speed, so please don't violate this rule.
+    /// This will also not check to make sure the move is on the graph, and thus can return an error if you pass a _start or _end that is not.
+    /// </summary>
+    /// <param name="_tiles">The tiles object both nodes are on</param>
     /// <param name="_start">The node your starting from</param>
     /// <param name="_end">The node your traveling to</param>
     /// <returns></returns>
-    public static float DistanceBetween( Tiles tiles, Node _start, Node _end )
+    public static int WeightOfMove(Tiles _tiles, Node _start, Node _end)
     {
-        //All distances start as 1.
-        float distanceTo = 1;
-        //Add another 1 (doubling the distance) if the terain of the tile you'd be entering is difficult
-        if (tiles.tiles[_end.P.X, _end.P.Y].Type == TileCell.TileType.Difficult)
-            distanceTo += 1f;
-        //If moving diagonally, make distance as long as possible without stoping diagonal moves
-        if (_start.P.X != _end.P.X && _start.P.Y != _end.P.Y)
-            distanceTo += .9f;
+        if (_tiles.GetTile(_end.P).Type == TileCell.TileType.Difficult)
+            return (Coord.AreDiagonal(_start.P, _end.P)) ? DD : D;
 
-        return distanceTo;
+        return 0;
     }
 
     public static bool operator ==(Node _one, Node _two)

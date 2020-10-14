@@ -23,8 +23,7 @@ public class Tiles
     /// <summary>
     /// Holds the tiles actors are currently moving through. This is used for local avoidance, making sure actors don't bump into one aother.
     /// </summary>
-    public int[,] movingThrough { get; private set; }
-    public Actor[,] actorMovingThrough { get; private set; }
+    public MovingThroughItem[,] MovingThrough { get; private set; }
     /// <summary>
     /// Stores min and max x and y corordinantes in world space.
     /// </summary>
@@ -208,10 +207,14 @@ public class Tiles
     private void GenerateMovingThrough()
     {
         //Initalize graph
-        movingThrough = new int[tiles.GetLength(0), tiles.GetLength(1)];
+        MovingThrough = new MovingThroughItem[tiles.GetLength(0), tiles.GetLength(1)];
         for (int x = 0; x < graph.GetLength(0); x++)
+        {
             for (int y = 0; y < graph.GetLength(1); y++)
-                movingThrough[x, y] = 0;
+            {
+                MovingThrough[x, y] = new MovingThroughItem(new Coord(x,y));
+            }
+        }
     }
 
     /// <summary>
@@ -233,7 +236,7 @@ public class Tiles
     /// <returns>The TileCell at the position _p, or null if _p isn't in Tiles</returns>
     public TileCell GetTile(Coord _p)
     {
-        if (!UDF.Between(_p.X, 0, tiles.GetLength(0) - 1) || !UDF.Between(_p.Y, 0, tiles.GetLength(1) - 1))
+        if (_p == null || !UDF.Between(_p.X, 0, tiles.GetLength(0) - 1) || !UDF.Between(_p.Y, 0, tiles.GetLength(1) - 1))
             return null;
         return tiles[_p.X, _p.Y];
     }
@@ -243,35 +246,45 @@ public class Tiles
     /// </summary>
     /// <param name="_p">A Coord the represents a postions in teh 2D array graph</param>
     /// <returns>The TileCell at the position _p, or null if _p isn't in Tiles</returns>
-    public int GetMovingThrough(Coord _p)
+    public MovingThroughItem GetMovingThrough(Coord _p)
     {
-        if (!UDF.Between(_p.X, 0, movingThrough.GetLength(0) - 1) || !UDF.Between(_p.Y, 0, movingThrough.GetLength(1) - 1))
-            return 0;
-        return movingThrough[_p.X, _p.Y];
-    }
-
-    public Actor GetActorMovingThrough(Coord _p)
-    {
-        if (!UDF.Between(_p.X, 0, actorMovingThrough.GetLength(0) - 1) || !UDF.Between(_p.Y, 0, actorMovingThrough.GetLength(1) - 1))
+        if (_p == null || !UDF.Between(_p.X, 0, MovingThrough.GetLength(0) - 1) || !UDF.Between(_p.Y, 0, MovingThrough.GetLength(1) - 1))
             return null;
-        return actorMovingThrough[_p.X, _p.Y];
+        return MovingThrough[_p.X, _p.Y];
     }
 
     public bool SetMovingThrough(Coord _p, int _value, Actor _actor)
     {
-        if (!UDF.Between(_p.X, 0, movingThrough.GetLength(0) - 1) || !UDF.Between(_p.Y, 0, movingThrough.GetLength(1) - 1))
+        if (_p == null || !UDF.Between(_p.X, 0, MovingThrough.GetLength(0) - 1) || !UDF.Between(_p.Y, 0, MovingThrough.GetLength(1) - 1))
             return false;
-        movingThrough[_p.X, _p.Y] = _value;
-        actorMovingThrough[_p.X, _p.Y] = _actor;
+        GetMovingThrough(_p).Set(_actor,_value);
+        _actor.myMovement.MyMovingThrough.Add(MovingThrough[_p.X, _p.Y]);
         return true;
+    }
+
+    public bool SetMovingThrough(MovingThroughItem _item)
+    {
+        if (_item == null || _item.P == null || !UDF.Between(_item.P.X, 0, MovingThrough.GetLength(0) - 1) || !UDF.Between(_item.P.Y, 0, MovingThrough.GetLength(1) - 1))
+            return false;
+        GetMovingThrough(_item.P).Set(_item);
+        _item.myActor.myMovement.MyMovingThrough.Add(_item);
+        return true;
+    }
+
+    public bool SetMovingThrough(HashSet<MovingThroughItem> _mt )
+    {
+        bool output = false;
+        foreach( MovingThroughItem aMt in _mt)
+            if (SetMovingThrough(aMt))
+                output = true;
+        return output;
     }
 
     public bool RemoveMovingThrough(Coord _p)
     {
-        if (!UDF.Between(_p.X, 0, movingThrough.GetLength(0) - 1) || !UDF.Between(_p.Y, 0, movingThrough.GetLength(1) - 1))
+        if (_p == null || !UDF.Between(_p.X, 0, MovingThrough.GetLength(0) - 1) || !UDF.Between(_p.Y, 0, MovingThrough.GetLength(1) - 1))
             return false;
-        movingThrough[_p.X, _p.Y] = 0;
-        actorMovingThrough[_p.X, _p.Y] = null;
+        MovingThrough[_p.X, _p.Y].Empty();
         return true;
     }
 

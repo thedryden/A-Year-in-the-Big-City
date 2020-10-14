@@ -137,4 +137,12 @@ public static class UDF {
             return _value * -1;
         return _value;
     }
+
+    public static void Swap<T>(ref T lhs, ref T rhs)
+    {
+        T temp;
+        temp = lhs;
+        lhs = rhs;
+        rhs = temp;
+    }
 }

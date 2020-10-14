@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using UnityEditor;
 using UnityEngine;
 
 public class GameManager : MonoBehaviour
@@ -21,6 +22,9 @@ public class GameManager : MonoBehaviour
     /// If on debuging become verbose. If off only items that represent problems, but not nessisarily errors, will be displayed
     /// </summary>
     public bool ShowDebug;
+    public bool ready = false;
+    public int actorReady = 0;
+    private bool pathReady = false;
 
     // Use this for initialization
     void Awake () {
@@ -36,6 +40,18 @@ public class GameManager : MonoBehaviour
             ActorDictionary = new Dictionary<string, Actor>();
 
         TileOffset = new Vector3( tileSize * .5f, tileSize * .5f, tileSize * .5f );
+    }
+
+    public void PathReady()
+    {
+        pathReady = true;
+        ImReady();
+    }
+
+    private void ImReady()
+    {
+        if(pathReady)
+            ready = true;
     }
 
     public void AddActor( Actor _actor )

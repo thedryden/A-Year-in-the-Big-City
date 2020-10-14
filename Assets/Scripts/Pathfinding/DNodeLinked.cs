@@ -2,46 +2,40 @@
 /// The represents a single item in the MinDist linked list. 
 /// It holds a node, and a referance to the next and previous node along with a total distance to this node.
 /// </summary>
-public class DistLinked
+public class DNodeLinked
 {
     /// <summary>
     /// Link to prev and next node in the sequence
     /// </summary>
-    public DistLinked prev, next;
-    /// <summary>
-    /// Total distance to this node from the origin
-    /// </summary>
-    public float dist;
+    public DNodeLinked prev, next;
     /// <summary>
     /// The node we care about
     /// </summary>
-    public Node node;
+    public DNode node;
 
     /// <summary>
-    /// Create a new DistLinked with null prev and next
+    /// Create a new DNodeLinked with null prev and next
     /// </summary>
     /// <param name="_node">The node to store</param>
     /// <param name="_dist">The total distance to this node form the origin</param>
-    public DistLinked(Node _node, float _dist)
+    public DNodeLinked(DNode _node)
     {
         node = _node;
         prev = null;
         next = null;
-        dist = _dist;
     }
 
     /// <summary>
-    /// Creates a new DistLinked with the _prev and _next values already set
+    /// Creates a new DNodeLinked with the _prev and _next values already set
     /// </summary>
     /// <param name="_node">The node to store</param>
-    /// <param name="_prev">The previous DistLinked in the list</param>
-    /// <param name="_next">The next DistLinked in the list</param>
+    /// <param name="_prev">The previous DNodeLinked in the list</param>
+    /// <param name="_next">The next DNodeLinked in the list</param>
     /// <param name="_dist">The total distance to this node form the origin</param>
-    public DistLinked(Node _node, DistLinked _prev, DistLinked _next, float _dist)
+    public DNodeLinked(DNode _node, DNodeLinked _prev, DNodeLinked _next)
     {
         node = _node;
         prev = _prev;
         next = _next;
-        dist = _dist;
     }
 }

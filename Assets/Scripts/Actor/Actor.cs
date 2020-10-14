@@ -8,6 +8,8 @@ public class Actor : MonoBehaviour {
     public Movement myMovement;
     public float speed = 1f;    //Default speed is one.
     private float _currentSpeed;
+    public bool ready = false;
+    private bool moveReady = false;
     public float currentSpeed {
         get { return _currentSpeed;  }
         set
@@ -31,6 +33,19 @@ public class Actor : MonoBehaviour {
             myMovement = GetComponent<Movement>();
 
         GameManager.instance.AddActor(this);
+    }
+
+    public void MoveReady()
+    {
+        moveReady = true;
+        ImReady();
+    }
+
+    private void ImReady()
+    {
+        if(moveReady)
+            ready = true;
+        GameManager.instance.actorReady++;
     }
 
     //Using the base of speed, calcuated the current speed of the actor based on equipment

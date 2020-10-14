@@ -45,6 +45,8 @@ public class CoordLinked {
     public void Add( Node _node )
     {
         head = new CoordItem(_node, head);
+        if (foot == null)
+            foot = head;
         Length++;
     }
 
@@ -54,8 +56,18 @@ public class CoordLinked {
     /// <param name="_list">The list to prepend to the list</param>
     public void Add( CoordLinked _list)
     {
-        _list.foot = head;
-        head = _list.head;
+        if (_list == null || _list.head == null)
+            return;
+        if (head == null)
+        {
+            head = _list.head;
+            foot = _list.foot;
+        }
+        else
+        {
+            _list.foot = head;
+            head = _list.head;
+        }
         Length += _list.Length;
     }
 
@@ -66,8 +78,17 @@ public class CoordLinked {
     public void Append( Node _node)
     {
         CoordItem newItem = new CoordItem(_node);
-        foot.next = newItem;
-        foot = newItem;
+        if(head == null)
+        {
+            head = newItem;
+            foot = newItem;
+        }
+        else
+        {
+            foot.next = newItem;
+            foot = newItem;
+        }
+        Length++;
     }
 
     /// <summary>
@@ -76,6 +97,14 @@ public class CoordLinked {
     /// <param name="_list">List to add to the end of the list</param>
     public void Append( CoordLinked _list)
     {
+        if (_list == null || _list.head == null)
+            return;
+        if (head == null)
+        {
+            head = _list.head;
+            foot = _list.foot;
+            return;
+        }
         foot.next = _list.head;
         foot = _list.foot;
         Length += _list.Length;
@@ -87,6 +116,8 @@ public class CoordLinked {
     /// <returns>The Coord at the top of the list</returns>
     public Coord GetHead()
     {
+        if (head == null)
+            return null;
         return head.coord;
     }
 
@@ -96,6 +127,8 @@ public class CoordLinked {
     /// <returns></returns>
     public Coord GetFoot()
     {
+        if (foot == null)
+            return null;
         return foot.coord;
     }
 
@@ -146,5 +179,19 @@ public class CoordLinked {
         if (head == null)
             foot = null;
         return temp.coord;
+    }
+
+    public override string ToString()
+    {
+        string output = "";
+        CoordItem aCoord = head;
+        while(aCoord != null)
+        {
+            if (output.Length > 0)
+                output += ", ";
+            output += aCoord.coord;
+            aCoord = aCoord.next;
+        }
+        return output;
     }
 }
